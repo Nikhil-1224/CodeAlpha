@@ -1,0 +1,65 @@
+import os
+import numpy as np
+import librosa
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from tensorflow.keras.utils import to_categorical
+
+
+emotions = ['happy', 'sad', 'angry']
+data = []
+labels = []
+
+sr = 22050  # sample rate
+duration = 2.5  # seconds
+samples = int(sr * duration)
+
+for emotion in emotions:
+    for i in range(20):
+        y = np.random.uniform(low=-1.0, high=1.0, size=samples)
+        mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=40)
+        mfcc = np.mean(mfcc.T, axis=0)
+        data.append(mfcc)
+        labels.append(emotion)
+
+data = np.array(data)
+labels = np.array(labels)
+
+
+encoder = LabelEncoder()
+y = encoder.fit_transform(labels)
+y = to_categorical(y)
+
+
+X_train, X_test, y_train, y_test = train_test_split(
+    data, y, test_size=0.2, random_state=42
+)
+
+
+model = Sequential([
+
+    Flatten(input_shape=(40,)), # Flatten the 40 features
+    Dense(64, activation='relu'),
+    Dropout(0.3),
+    Dense(len(emotions), activation='softmax')
+])
+
+
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+
+
+model.fit(X_train, y_train, epochs=15, batch_size=8, validation_data=(X_test, y_test), verbose=1)
+
+
+loss, acc = model.evaluate(X_test, y_test, verbose=0)
+print(f"\n Test Accuracy: {acc:.2f}")
+
+y_pred = model.predict(X_test)
+predicted_labels = encoder.inverse_transform(np.argmax(y_pred, axis=1))
+true_labels = encoder.inverse_transform(np.argmax(y_test, axis=1))
+
+print("\n Recognized Emotions on Test Set:")
+for i in range(len(predicted_labels)):
+    print(f" Sample {i+1}: True = {true_labels[i]} | Predicted = {predicted_labels[i]}")
