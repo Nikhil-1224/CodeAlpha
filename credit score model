@@ -1,0 +1,158 @@
+import os
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    roc_curve,
+    confusion_matrix,
+    ConfusionMatrixDisplay,
+)
+import matplotlib.pyplot as plt
+import joblib
+
+
+def load_demo_data():
+    data = {
+        "income": [
+            45000, 60000, 52000, 30000, 70000, 40000, 80000, 25000, 55000, 48000,
+            62000, 36000, 90000, 29000, 75000, 31000, 43000, 51000, 47000, 85000
+        ],
+        "total_debt": [
+            12000, 15000, 10000, 20000, 17000, 22000, 9000, 25000, 14000, 16000,
+            11000, 18000, 13000, 21000, 8000, 24000, 15000, 12000, 19000, 7000
+        ],
+        "credit_limit": [
+            30000, 40000, 35000, 20000, 45000, 25000, 50000, 18000, 38000, 32000,
+            36000, 23000, 60000, 19000, 48000, 21000, 31000, 34000, 33000, 55000
+        ],
+        "total_balance": [
+            10000, 12000, 8000, 18000, 15000, 20000, 7000, 16000, 13000, 14000,
+            9000, 17000, 11000, 19000, 6000, 20000, 12000, 10000, 15000, 5000
+        ],
+        "num_payments": [
+            60, 72, 65, 40, 80, 55, 90, 35, 70, 62,
+            75, 50, 100, 38, 85, 42, 58, 68, 61, 95
+        ],
+        "num_late_payments": [
+            3, 2, 1, 5, 2, 6, 1, 7, 3, 2,
+            1, 5, 2, 6, 1, 7, 3, 2, 4, 1
+        ],
+        "target": [
+            0, 0, 0, 1, 0, 1, 0, 1, 0, 0,
+            0, 1, 0, 1, 0, 1, 0, 0, 1, 0
+        ]
+    }
+    return pd.DataFrame(data)
+
+
+def basic_feature_engineering(df):
+    df = df.copy()
+    df["debt_to_income"] = df["total_debt"] / df["income"]
+    df["credit_utilization"] = df["total_balance"] / df["credit_limit"]
+    df["payment_history_ratio"] = (df["num_payments"] - df["num_late_payments"]) / df["num_payments"]
+    return df
+
+
+def evaluate_model(model, X_test, y_test, model_name="model", plot_prefix="output"):
+    y_pred = model.predict(X_test)
+    try:
+        y_proba = model.predict_proba(X_test)[:, 1]
+    except Exception:
+        y_proba = None
+
+    acc = accuracy_score(y_test, y_pred)
+    prec = precision_score(y_test, y_pred, zero_division=0)
+    rec = recall_score(y_test, y_pred, zero_division=0)
+    f1 = f1_score(y_test, y_pred, zero_division=0)
+    roc_auc = roc_auc_score(y_test, y_proba) if y_proba is not None else float("nan")
+
+    return {"accuracy": acc, "precision": prec, "recall": rec, "f1": f1, "roc_auc": roc_auc}
+
+
+def run_pipeline(df, target_col="target", test_size=0.2, random_state=42):
+    df = basic_feature_engineering(df)
+    X = df.drop(columns=[target_col])
+    y = df[target_col]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, stratify=y, random_state=random_state
+    )
+
+    imputer = SimpleImputer(strategy="median")
+    scaler = StandardScaler()
+
+    models = {
+        "LogisticRegression": Pipeline(
+            steps=[("imputer", imputer), ("scaler", scaler), ("clf", LogisticRegression(max_iter=1000))]
+        ),
+        "DecisionTree": Pipeline(
+            steps=[("imputer", imputer), ("clf", DecisionTreeClassifier(max_depth=6, random_state=random_state))]
+        ),
+        "RandomForest": Pipeline(
+            steps=[("imputer", imputer), ("clf", RandomForestClassifier(n_estimators=200, max_depth=8, random_state=random_state))]
+        ),
+    }
+
+    results = {}
+    best_model = None
+    best_auc = -1.0
+    for name, pipeline in models.items():
+        pipeline.fit(X_train, y_train)
+        metrics = evaluate_model(pipeline, X_test, y_test, model_name=name)
+        results[name] = metrics
+        if metrics["roc_auc"] > best_auc:
+            best_auc = metrics["roc_auc"]
+            best_model = (name, pipeline)
+
+    return results, best_model, X_train.columns
+
+
+def predict_creditworthiness(model, feature_columns, applicant_data):
+    df_applicant = pd.DataFrame([applicant_data])
+    df_applicant = basic_feature_engineering(df_applicant)
+    df_applicant = df_applicant[feature_columns]
+
+    prediction = model.predict(df_applicant)[0]
+    probability = model.predict_proba(df_applicant)[0][1]
+
+    if prediction == 0:
+        status = "Good Credit"
+    else:
+        status = "Bad Credit"
+
+    return status, probability
+
+
+if __name__ == "__main__":
+    df = load_demo_data()
+    results, best_model, feature_columns = run_pipeline(df)
+
+    print("\n====== Summary of Results ======")
+    for name, m in results.items():
+        print(f"{name}: ACC={m['accuracy']:.3f}, F1={m['f1']:.3f}, ROC-AUC={m['roc_auc']:.3f}")
+    if best_model:
+        print(f"\nBest model: {best_model[0]}")
+
+        # Example applicant
+        applicant = {
+            "income": 50000,
+            "total_debt": 12000,
+            "credit_limit": 30000,
+            "total_balance": 8000,
+            "num_payments": 60,
+            "num_late_payments": 2,
+        }
+
+        status, prob = predict_creditworthiness(best_model[1], feature_columns, applicant)
+        print(f"\nApplicant Prediction: {status} (Probability of Bad Credit = {prob:.2f})")
